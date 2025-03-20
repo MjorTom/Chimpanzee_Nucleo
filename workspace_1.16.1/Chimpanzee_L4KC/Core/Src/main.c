@@ -37,7 +37,7 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 // Arm and Wrist Pin Definitions
-#define DEBUG_EN 0
+#define DEBUG_EN 1
 
 #define PIN_DIR_WRIST GPIO_PIN_4 // GPIOB | D12
 #define  PIN_EN_WRIST GPIO_PIN_5 // GPIOB | D11
@@ -128,7 +128,152 @@ static CHIMP_TypeDef chimp;
 void SystemClock_Config(void);
 static void MX_NVIC_Init(void);
 /* USER CODE BEGIN PFP */
+void Rx_Manage() {
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, 1);
 
+	uint8_t pcktFilled_f = 0;
+
+	if ((chimp.UART_Buffer == CHIMP_EOP && !chimp.Esc_f) || chimp.FillIndex == (CHIMP_RX_PCKT_SIZE - 1)) {
+		chimp.RxPacket[chimp.FillIndex] = chimp.UART_Buffer;
+		pcktFilled_f = 1;
+	}
+	else if (chimp.UART_Buffer == CHIMP_ESCAPE && !chimp.Esc_f) {
+		chimp.Esc_f = 1;
+	}
+	else {
+		chimp.RxPacket[chimp.FillIndex] = chimp.UART_Buffer;
+		chimp.FillIndex++;
+		chimp.Esc_f = 0;
+	}
+
+	if (pcktFilled_f) {
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, 0);
+
+		// Check if Address field contains current board address
+		if (chimp.RxPacket[1] == 0x00 && chimp.FillIndex >= 6) {
+
+			if (chimp.RxPacket[0] == CHIMP_INIT_SOP) {
+				// Response field evaluation //
+
+				// Perform CRC-8 check
+				if (HAL_CRC_Calculate(&hcrc, (uint32_t *)chimp.RxPacket, CHIMP_INIT_CRC8_IDX) != chimp.RxPacket[CHIMP_INIT_CRC8_IDX])
+					chimp.Resp_Pckt[CHIMP_RESP_RESPONSE_IDX] = CHIMP_RESP_CRC_FAILURE;
+				// If there is no other failure, perform version check
+				else {
+					if (chimp.Version == chimp.RxPacket[CHIMP_INIT_VERSION_IDX]) {
+						if (chimp.SubVersion == chimp.RxPacket[CHIMP_INIT_SUBVERSION_IDX]) {
+							chimp.Resp_Pckt[CHIMP_RESP_RESPONSE_IDX] = CHIMP_RESP_OK;
+						}
+						else if (chimp.SubVersion < chimp.RxPacket[CHIMP_INIT_SUBVERSION_IDX]) {
+							chimp.Resp_Pckt[CHIMP_RESP_RESPONSE_IDX] = CHIMP_RESP_OLD_VERSION_SLAVE;
+						}
+						else chimp.Resp_Pckt[CHIMP_RESP_RESPONSE_IDX] = CHIMP_RESP_OLD_VERSION_MASTER;
+					}
+					else if (chimp.Version < chimp.RxPacket[CHIMP_INIT_VERSION_IDX]) {
+						chimp.Resp_Pckt[CHIMP_RESP_RESPONSE_IDX] = CHIMP_RESP_OLD_VERSION_SLAVE;
+					}
+					else chimp.Resp_Pckt[CHIMP_RESP_RESPONSE_IDX] = CHIMP_RESP_OLD_VERSION_MASTER;
+				}
+
+				// ------------------------- //
+
+				// Response Packet CRC8 calculation
+				uint8_t tmp = HAL_CRC_Calculate(&hcrc, (uint32_t *)chimp.Resp_Pckt, CHIMP_RESP_CRC8_IDX);
+				uint8_t offset = 0;
+				if (tmp == CHIMP_ESCAPE || tmp == CHIMP_INIT_SOP || tmp == CHIMP_COMM_SOP || tmp == CHIMP_HB_SOP || tmp == CHIMP_EOP) {
+					chimp.Resp_Pckt[CHIMP_RESP_CRC8_IDX] = CHIMP_ESCAPE;
+					offset = 1;
+				}
+				chimp.Resp_Pckt[CHIMP_RESP_CRC8_IDX + offset] = tmp;
+				chimp.Resp_Pckt[CHIMP_RESP_EOP_IDX  + offset] = CHIMP_EOP;
+
+				// Send Response Packet
+				#if (DEBUG_EN == 1)
+					HAL_TIM_Base_Stop_IT(&htim6);
+					while (huart2.gState != HAL_UART_STATE_READY);
+					HAL_UART_Transmit(&huart2, chimp.Resp_Pckt, (CHIMP_RESP_PCKT_SIZE - 1 + offset), 10);
+					HAL_TIM_Base_Start_IT(&htim6);
+				#else
+					while (huart1.gState != HAL_UART_STATE_READY);
+					HAL_UART_Transmit_DMA(&huart1, chimp.Resp_Pckt, (CHIMP_RESP_PCKT_SIZE - 1 + offset));
+				#endif
+
+				// No Errors, update HB period
+				if (chimp.Resp_Pckt[CHIMP_RESP_RESPONSE_IDX] == CHIMP_RESP_OK) {
+					// Setting HB period and starting generation of HB packets
+					chimp.HB_Period = chimp.RxPacket[CHIMP_INIT_HB_PERIOD_IDX] + 1;
+				}
+			}
+			else {
+				// Perform CRC-8 check
+				chimp.RxPacket[0] = CHIMP_COMM_SOP;
+				if (HAL_CRC_Calculate(&hcrc, (uint32_t *)chimp.RxPacket, (chimp.FillIndex - 1)) == chimp.RxPacket[chimp.FillIndex - 1]) {
+					memcpy(chimp.Motor_Arg, (chimp.RxPacket + 3), (chimp.FillIndex - 4));
+
+					if (!chimp.RxPacket[2]) {
+						htim1.Instance->CCR1 = chimp.Motor_Arg[0];
+						htim1.Instance->CCR2 = chimp.Motor_Arg[1];
+						htim1.Instance->CCR3 = chimp.Motor_Arg[2];
+						htim1.Instance->CCR4 = chimp.Motor_Arg[3];
+
+						htim2.Instance->CCR1 = chimp.Motor_Arg[4];
+						htim2.Instance->CCR2 = chimp.Motor_Arg[5];
+						htim2.Instance->CCR3 = chimp.Motor_Arg[6];
+						htim2.Instance->CCR4 = chimp.Motor_Arg[7];
+					} else {
+						switch((uint16_t) chimp.RxPacket[3]) {
+							case 0:
+								HAL_GPIO_WritePin(GPIOB, PIN_DIR_WRIST, 1);
+								HAL_GPIO_WritePin(GPIOB,  PIN_EN_WRIST, 0);
+								HAL_TIM_Base_Start_IT(&htim15);
+								break;
+							case 1:
+								HAL_GPIO_WritePin(GPIOB, PIN_DIR_WRIST, 0);
+								HAL_GPIO_WritePin(GPIOB,  PIN_EN_WRIST, 0);
+								HAL_TIM_Base_Start_IT(&htim15);
+								break;
+							case 2:
+								HAL_TIM_Base_Stop_IT(&htim15);
+								HAL_GPIO_WritePin(GPIOB, PIN_EN_WRIST, 1);
+								HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, 0); // WRIST PWM output force to 0
+								break;
+							case 3: //open claw
+								HAL_GPIO_WritePin(GPIOB, PIN_DIR_HAND, 1);
+								HAL_TIM_Base_Start_IT(&htim16);
+								break;
+							case 4: //close claw
+								HAL_GPIO_WritePin(GPIOB, PIN_DIR_HAND, 0);
+								HAL_TIM_Base_Start_IT(&htim16);
+								break;
+							case 5: //stop claw
+								HAL_TIM_Base_Stop_IT(&htim16);
+								HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, 0); // CLAW PWM output forced to 0
+								break;
+							case 6:
+								HAL_GPIO_WritePin(GPIOB, PIN_EN_WRIST, 0); // active low
+								HAL_TIM_Base_Stop_IT(&htim15);
+								HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, 0); // WRIST PWM output force to 0
+								break;
+							case 7:
+								HAL_GPIO_WritePin(GPIOB, PIN_EN_WRIST, 1);
+								HAL_TIM_Base_Stop_IT(&htim15);
+								HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, 0); // WRIST PWM output force to 0
+								break;
+							default:
+								break;
+						}
+					}
+				}
+			}
+		}
+
+		// Resetting Communication Packet
+		memset(chimp.RxPacket, 0, chimp.FillIndex + 1);
+
+		chimp.Esc_f = 0;
+		chimp.FillIndex = 0;
+	}
+}
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -194,9 +339,7 @@ int main(void)
   chimp.HB_Pckt[CHIMP_HB_ADDRESS_IDX] =           0x00;
   chimp.HB_Pckt [CHIMP_HB_STATUS_IDX] = CHIMP_HB_READY;
 
-  #if (DEBUG_EN == 1)
-  	  HAL_UART_Receive_DMA(&huart2, &chimp.UART_Buffer, 1);
-  #else
+  #if (DEBUG_EN == 0)
   	  HAL_UART_Receive_DMA(&huart1, &chimp.UART_Buffer, 1);
   #endif
 
@@ -225,9 +368,10 @@ int main(void)
   // LED On
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, 1);
 
-  HAL_SuspendTick();
-  HAL_PWR_EnableSleepOnExit();
-  HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
+  // Low Power Mode, not possible with BUSY WAIT
+  //HAL_SuspendTick();
+  //HAL_PWR_EnableSleepOnExit();
+  //HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -237,9 +381,16 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+	// Low Power Mode suitable for SysTick-based implementations, not possible with BUSY WAIT
   	//HAL_SuspendTick();
 	//HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
 	//HAL_ResumeTick();
+
+	#if (DEBUG_EN == 1)
+		if (HAL_UART_Receive(&huart2, &chimp.UART_Buffer, 1, 10) == HAL_OK) {
+			Rx_Manage();
+		}
+	#endif
   }
   /* USER CODE END 3 */
 }
@@ -337,148 +488,7 @@ static void MX_NVIC_Init(void)
 
 /* USER CODE BEGIN 4 */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, 1);
-
-	uint8_t pcktFilled_f = 0;
-
-	if ((chimp.UART_Buffer == CHIMP_EOP && !chimp.Esc_f) || chimp.FillIndex == (CHIMP_RX_PCKT_SIZE - 1)) {
-		chimp.RxPacket[chimp.FillIndex] = chimp.UART_Buffer;
-		pcktFilled_f = 1;
-	}
-	else if (chimp.UART_Buffer == CHIMP_ESCAPE && !chimp.Esc_f) {
-		chimp.Esc_f = 1;
-	}
-	else {
-		chimp.RxPacket[chimp.FillIndex] = chimp.UART_Buffer;
-		chimp.FillIndex++;
-		chimp.Esc_f = 0;
-	}
-
-	if (pcktFilled_f) {
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, 0);
-
-		// Check if Address field contains current board address
-		if (chimp.RxPacket[1] == 0x00 && chimp.FillIndex >= 6) {
-
-			if (chimp.RxPacket[0] == CHIMP_INIT_SOP) {
-				// Response field evaluation //
-
-				// Perform CRC-8 check
-				if (HAL_CRC_Calculate(&hcrc, (uint32_t *)chimp.RxPacket, CHIMP_INIT_CRC8_IDX) != chimp.RxPacket[CHIMP_INIT_CRC8_IDX])
-					chimp.Resp_Pckt[CHIMP_RESP_RESPONSE_IDX] = CHIMP_RESP_CRC_FAILURE;
-				// If there is no other failure, perform version check
-				else {
-					if (chimp.Version == chimp.RxPacket[CHIMP_INIT_VERSION_IDX]) {
-						if (chimp.SubVersion == chimp.RxPacket[CHIMP_INIT_SUBVERSION_IDX]) {
-							chimp.Resp_Pckt[CHIMP_RESP_RESPONSE_IDX] = CHIMP_RESP_OK;
-						}
-						else if (chimp.SubVersion < chimp.RxPacket[CHIMP_INIT_SUBVERSION_IDX]) {
-							chimp.Resp_Pckt[CHIMP_RESP_RESPONSE_IDX] = CHIMP_RESP_OLD_VERSION_SLAVE;
-						}
-						else chimp.Resp_Pckt[CHIMP_RESP_RESPONSE_IDX] = CHIMP_RESP_OLD_VERSION_MASTER;
-					}
-					else if (chimp.Version < chimp.RxPacket[CHIMP_INIT_VERSION_IDX]) {
-						chimp.Resp_Pckt[CHIMP_RESP_RESPONSE_IDX] = CHIMP_RESP_OLD_VERSION_SLAVE;
-					}
-					else chimp.Resp_Pckt[CHIMP_RESP_RESPONSE_IDX] = CHIMP_RESP_OLD_VERSION_MASTER;
-				}
-
-				// ------------------------- //
-
-				// Response Packet CRC8 calculation
-				uint8_t tmp = HAL_CRC_Calculate(&hcrc, (uint32_t *)chimp.Resp_Pckt, CHIMP_RESP_CRC8_IDX);
-				uint8_t offset = 0;
-				if (tmp == CHIMP_ESCAPE || tmp == CHIMP_INIT_SOP || tmp == CHIMP_COMM_SOP || tmp == CHIMP_HB_SOP || tmp == CHIMP_EOP) {
-					chimp.Resp_Pckt[CHIMP_RESP_CRC8_IDX] = CHIMP_ESCAPE;
-					offset = 1;
-				}
-				chimp.Resp_Pckt[CHIMP_RESP_CRC8_IDX + offset] = tmp;
-				chimp.Resp_Pckt[CHIMP_RESP_EOP_IDX  + offset] = CHIMP_EOP;
-
-				// Send Response Packet
-				#if (DEBUG_EN == 1)
-					while (huart2.gState != HAL_UART_STATE_READY);
-					HAL_UART_Transmit_DMA(&huart2, chimp.Resp_Pckt, (CHIMP_RESP_PCKT_SIZE - 1 + offset));
-				#else
-					while (huart1.gState != HAL_UART_STATE_READY);
-					HAL_UART_Transmit_DMA(&huart1, chimp.Resp_Pckt, (CHIMP_RESP_PCKT_SIZE - 1 + offset));
-				#endif
-
-				// No Errors, update HB period
-				if (chimp.Resp_Pckt[CHIMP_RESP_RESPONSE_IDX] == CHIMP_RESP_OK) {
-					// Setting HB period and starting generation of HB packets
-					chimp.HB_Period = chimp.RxPacket[CHIMP_INIT_HB_PERIOD_IDX] + 1;
-				}
-			}
-			else {
-				// Perform CRC-8 check
-				chimp.RxPacket[0] = CHIMP_COMM_SOP;
-				if (HAL_CRC_Calculate(&hcrc, (uint32_t *)chimp.RxPacket, (chimp.FillIndex - 1)) == chimp.RxPacket[chimp.FillIndex - 1]) {
-					memcpy(chimp.Motor_Arg, (chimp.RxPacket + 3), (chimp.FillIndex - 4));
-
-					if (!chimp.RxPacket[2]) {
-						htim1.Instance->CCR1 = chimp.Motor_Arg[0];
-						htim1.Instance->CCR2 = chimp.Motor_Arg[1];
-						htim1.Instance->CCR3 = chimp.Motor_Arg[2];
-						htim1.Instance->CCR4 = chimp.Motor_Arg[3];
-
-						htim2.Instance->CCR1 = chimp.Motor_Arg[4];
-						htim2.Instance->CCR2 = chimp.Motor_Arg[5];
-						htim2.Instance->CCR3 = chimp.Motor_Arg[6];
-						htim2.Instance->CCR4 = chimp.Motor_Arg[7];
-					} else {
-						switch((uint16_t) chimp.RxPacket[3]) {
-							case 0:
-								HAL_GPIO_WritePin(GPIOB, PIN_DIR_WRIST, 1);
-								HAL_GPIO_WritePin(GPIOB,  PIN_EN_WRIST, 0);
-								HAL_TIM_Base_Start_IT(&htim15);
-								break;
-							case 1:
-								HAL_GPIO_WritePin(GPIOB, PIN_DIR_WRIST, 0);
-								HAL_GPIO_WritePin(GPIOB,  PIN_EN_WRIST, 0);
-								HAL_TIM_Base_Start_IT(&htim15);
-								break;
-							case 2:
-								HAL_TIM_Base_Stop_IT(&htim15);
-								HAL_GPIO_WritePin(GPIOB, PIN_EN_WRIST, 1);
-								HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, 0); // WRIST PWM output force to 0
-								break;
-							case 3: //open claw
-								HAL_GPIO_WritePin(GPIOB, PIN_DIR_HAND, 1);
-								HAL_TIM_Base_Start_IT(&htim16);
-								break;
-							case 4: //close claw
-								HAL_GPIO_WritePin(GPIOB, PIN_DIR_HAND, 0);
-								HAL_TIM_Base_Start_IT(&htim16);
-								break;
-							case 5: //stop claw
-								HAL_TIM_Base_Stop_IT(&htim16);
-								HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, 0); // CLAW PWM output forced to 0
-								break;
-							case 6:
-								HAL_GPIO_WritePin(GPIOB, PIN_EN_WRIST, 0); // active low
-								HAL_TIM_Base_Stop_IT(&htim15);
-								HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, 0); // WRIST PWM output force to 0
-								break;
-							case 7:
-								HAL_GPIO_WritePin(GPIOB, PIN_EN_WRIST, 1);
-								HAL_TIM_Base_Stop_IT(&htim15);
-								HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, 0); // WRIST PWM output force to 0
-								break;
-							default:
-								break;
-						}
-					}
-				}
-			}
-		}
-
-		// Resetting Communication Packet
-		memset(chimp.RxPacket, 0, chimp.FillIndex + 1);
-
-		chimp.Esc_f = 0;
-		chimp.FillIndex = 0;
-	}
+	Rx_Manage();
 }
 
 void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef* htim){
@@ -542,7 +552,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim){
 			// Send Init Response Packet
 			#if (DEBUG_EN == 1)
 				while (huart2.gState != HAL_UART_STATE_READY);
-				HAL_UART_Transmit_DMA(&huart2, chimp.HB_Pckt, (CHIMP_HB_PCKT_SIZE - 1 + offset));
+				HAL_UART_Transmit(&huart2, chimp.HB_Pckt, (CHIMP_HB_PCKT_SIZE - 1 + offset), 10);
 			#else
 				while (huart1.gState != HAL_UART_STATE_READY);
 				HAL_UART_Transmit_DMA(&huart1, chimp.HB_Pckt, (CHIMP_HB_PCKT_SIZE - 1 + offset));
