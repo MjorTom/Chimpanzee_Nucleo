@@ -128,7 +128,8 @@ static CHIMP_TypeDef chimp;
 void SystemClock_Config(void);
 static void MX_NVIC_Init(void);
 /* USER CODE BEGIN PFP */
-void Rx_Manage() {
+void CHIMP_UART_RXHandler() {
+	// LED On
 	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, 1);
 
 	uint8_t pcktFilled_f = 0;
@@ -147,6 +148,7 @@ void Rx_Manage() {
 	}
 
 	if (pcktFilled_f) {
+		// LED Off
 		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, 0);
 
 		// Check if Address field contains current board address
@@ -187,22 +189,21 @@ void Rx_Manage() {
 				chimp.Resp_Pckt[CHIMP_RESP_CRC8_IDX + offset] = tmp;
 				chimp.Resp_Pckt[CHIMP_RESP_EOP_IDX  + offset] = CHIMP_EOP;
 
+				// No Errors, update HB period
+				if (chimp.Resp_Pckt[CHIMP_RESP_RESPONSE_IDX] == CHIMP_RESP_OK) {
+					// Setting HB period and starting generation of HB packets
+					chimp.HB_Period = chimp.RxPacket[CHIMP_INIT_HB_PERIOD_IDX] + 1;
+				}
+
 				// Send Response Packet
 				#if (DEBUG_EN == 1)
 					HAL_TIM_Base_Stop_IT(&htim6);
-					while (huart2.gState != HAL_UART_STATE_READY);
 					HAL_UART_Transmit(&huart2, chimp.Resp_Pckt, (CHIMP_RESP_PCKT_SIZE - 1 + offset), 10);
 					HAL_TIM_Base_Start_IT(&htim6);
 				#else
 					while (huart1.gState != HAL_UART_STATE_READY);
 					HAL_UART_Transmit_DMA(&huart1, chimp.Resp_Pckt, (CHIMP_RESP_PCKT_SIZE - 1 + offset));
 				#endif
-
-				// No Errors, update HB period
-				if (chimp.Resp_Pckt[CHIMP_RESP_RESPONSE_IDX] == CHIMP_RESP_OK) {
-					// Setting HB period and starting generation of HB packets
-					chimp.HB_Period = chimp.RxPacket[CHIMP_INIT_HB_PERIOD_IDX] + 1;
-				}
 			}
 			else {
 				// Perform CRC-8 check
@@ -343,8 +344,6 @@ int main(void)
   	  HAL_UART_Receive_DMA(&huart1, &chimp.UART_Buffer, 1);
   #endif
 
-  HAL_TIM_Base_Start_IT(&htim6);
-
   HAL_TIM_Base_Start_IT(&htim1);
   HAL_TIM_Base_Start_IT(&htim2);
 
@@ -364,9 +363,6 @@ int main(void)
 
   // Wrist disable for safe initial state
   HAL_GPIO_WritePin(GPIOB, PIN_EN_WRIST, 1);
-
-  // LED On
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, 1);
 
   // Low Power Mode, not possible with BUSY WAIT
   //HAL_SuspendTick();
@@ -388,7 +384,7 @@ int main(void)
 
 	#if (DEBUG_EN == 1)
 		if (HAL_UART_Receive(&huart2, &chimp.UART_Buffer, 1, 10) == HAL_OK) {
-			Rx_Manage();
+			CHIMP_UART_RXHandler();
 		}
 	#endif
   }
@@ -488,7 +484,7 @@ static void MX_NVIC_Init(void)
 
 /* USER CODE BEGIN 4 */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-	Rx_Manage();
+	CHIMP_UART_RXHandler();
 }
 
 void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef* htim){
@@ -551,7 +547,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim){
 
 			// Send Init Response Packet
 			#if (DEBUG_EN == 1)
-				while (huart2.gState != HAL_UART_STATE_READY);
 				HAL_UART_Transmit(&huart2, chimp.HB_Pckt, (CHIMP_HB_PCKT_SIZE - 1 + offset), 10);
 			#else
 				while (huart1.gState != HAL_UART_STATE_READY);
