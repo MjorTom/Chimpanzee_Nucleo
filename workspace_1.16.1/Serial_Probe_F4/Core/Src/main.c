@@ -35,7 +35,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define MODE 1 // 0 IT, 1 DMA, 2 BUSY
+#define MODE 0 // 0 IT, 1 DMA, 2 BUSY
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -211,19 +211,31 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 			TX_UART_f = 1;
 		} else HAL_UART_Transmit_DMA(&huart2, &uart_buff, 1);
 	#elif (MODE == 0)
-		while(huart2.gState != HAL_UART_STATE_READY);
-		HAL_UART_Transmit_IT(&huart2, &uart_buff, 1);
-		HAL_UART_Receive_IT(&huart2, &uart_buff, 1);
+		if (huart2.gState != HAL_UART_STATE_READY) {
+			TX_UART_f = 1;
+		} else {
+			HAL_UART_Transmit_IT(&huart2, &uart_buff, 1);
+			HAL_UART_Receive_IT(&huart2, &uart_buff, 1);
+		}
 	#endif
 }
 
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
 	if (TX_UART_f) {
 		TX_UART_f = 0;
-		HAL_UART_Transmit_DMA(&huart2, &uart_buff, 1);
+		#if (MODE == 1)
+			HAL_UART_Transmit_DMA(&huart2, &uart_buff, 1);
+		#elif (MODE == 0)
+			HAL_UART_Transmit_IT(&huart2, &uart_buff, 1);
+			HAL_UART_Receive_IT(&huart2, &uart_buff, 1);
+		#endif
 	} else if (TX_TIM6_f) {
 		TX_TIM6_f = 0;
-		HAL_UART_Transmit_DMA(&huart2, TX_Packet, 8);
+		#if (MODE == 1)
+			HAL_UART_Transmit_DMA(&huart2, TX_Packet, 8);
+		#elif (MODE == 0)
+			HAL_UART_Transmit_IT(&huart2, TX_Packet, 8);
+		#endif
 	}
 	// LED Off
 	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, 0);
@@ -236,8 +248,9 @@ void HAL_TIM_PeriodElapsedCallback (TIM_HandleTypeDef *htim) {
 				TX_TIM6_f = 1;
 			} else HAL_UART_Transmit_DMA(&huart2, TX_Packet, 8);
 		#elif (MODE == 0)
-			while(huart2.gState != HAL_UART_STATE_READY);
-			HAL_UART_Transmit_IT(&huart2, TX_Packet, 8);
+			if (huart2.gState != HAL_UART_STATE_READY) {
+				TX_TIM6_f = 1;
+			} else HAL_UART_Transmit_IT(&huart2, TX_Packet, 8);
 		#elif (MODE == 2)
 			if (huart2.gState != HAL_UART_STATE_READY) {
 				TX_TIM6_f = 1;

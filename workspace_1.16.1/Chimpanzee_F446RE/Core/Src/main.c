@@ -114,6 +114,7 @@ typedef struct {
 	uint8_t                                       Esc_f;
 	uint8_t 			                    UART_Buffer;
 	uint8_t                                  Arm_Torque;
+	uint8_t                                CHIMP_Init_f;
 	uint8_t                TxPacket[CHIMP_TX_PCKT_SIZE];
 	uint8_t                RxPacket[CHIMP_RX_PCKT_SIZE];
 	uint8_t             Resp_Pckt[CHIMP_RESP_PCKT_SIZE];
@@ -202,18 +203,41 @@ void CHIMP_UART_RXHandler () {
 
 				// Send Response Packet
 				#if (DEBUG_EN == 1)
-					HAL_TIM_Base_Stop_IT(&htim6);
+					HAL_TIM_Base_Stop(&htim6);
 					HAL_UART_Transmit(&huart2, chimp.Resp_Pckt, (CHIMP_RESP_PCKT_SIZE - 1 + offset), 10);
 					HAL_TIM_Base_Start_IT(&htim6);
 				#else
 					while (huart1.gState != HAL_UART_STATE_READY);
 					HAL_UART_Transmit_DMA(&huart1, chimp.Resp_Pckt, (CHIMP_RESP_PCKT_SIZE - 1 + offset));
 				#endif
+
+				if (!chimp.CHIMP_Init_f) {
+					chimp.CHIMP_Init_f = 1;
+					// If first Init, start Motors PWM and HB Timers
+					HAL_TIM_Base_Start_IT(&htim1);
+					HAL_TIM_Base_Start_IT(&htim2);
+					HAL_TIM_Base_Start_IT(&htim6);
+
+				    // Set Output Compare IT for Motors and Arm PWMs
+				    HAL_TIM_OC_Start_IT(&htim1,TIM_CHANNEL_1);
+				    HAL_TIM_OC_Start_IT(&htim1,TIM_CHANNEL_2);
+				    HAL_TIM_OC_Start_IT(&htim1,TIM_CHANNEL_3);
+				    HAL_TIM_OC_Start_IT(&htim1,TIM_CHANNEL_4);
+
+				    HAL_TIM_OC_Start_IT(&htim2,TIM_CHANNEL_1);
+				    HAL_TIM_OC_Start_IT(&htim2,TIM_CHANNEL_2);
+				    HAL_TIM_OC_Start_IT(&htim2,TIM_CHANNEL_3);
+				    HAL_TIM_OC_Start_IT(&htim2,TIM_CHANNEL_4);
+
+				    HAL_TIM_OC_Start_IT(&htim12,TIM_CHANNEL_1);
+
+				    HAL_TIM_OC_Start_IT(&htim13,TIM_CHANNEL_1);
+				}
 			}
 			else {
 				// Perform CRC-8 check
 				chimp.RxPacket[0] = CHIMP_COMM_SOP;
-				if (CRC_Calculate(chimp.RxPacket, (chimp.FillIndex - 1)) == chimp.RxPacket[chimp.FillIndex - 1]) {
+				if (chimp.CHIMP_Init_f && CRC_Calculate(chimp.RxPacket, (chimp.FillIndex - 1)) == chimp.RxPacket[chimp.FillIndex - 1]) {
 					memcpy(chimp.Motor_Arg, (chimp.RxPacket + 3), (chimp.FillIndex - 4));
 
 					if (!chimp.RxPacket[2]) {
@@ -243,8 +267,6 @@ void CHIMP_UART_RXHandler () {
 						case 2:
 							HAL_TIM_Base_Stop_IT(&htim12);
 							HAL_GPIO_WritePin(GPIOB, PIN_EN_WRIST, 1);
-							HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, 0); // WRIST PWM output force to 0
-							WRIST=0;
 							EN=1;
 							break;
 						case 3: //open claw
@@ -257,21 +279,15 @@ void CHIMP_UART_RXHandler () {
 							break;
 						case 5: //stop claw
 							HAL_TIM_Base_Stop_IT(&htim13);
-							HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, 0); // CLAW PWM output forced to 0
-							CLAW=0;
 							break;
 						case 6:
-							HAL_GPIO_WritePin(GPIOB, PIN_EN_WRIST, 0); // active low
+							HAL_GPIO_WritePin(GPIOB, PIN_EN_WRIST, 0);
 							HAL_TIM_Base_Stop_IT(&htim12);
-							HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, 0); // WRIST PWM output force to 0
-							WRIST=0;
 							EN=0;
 							break;
 						case 7:
 							HAL_GPIO_WritePin(GPIOB, PIN_EN_WRIST, 1);
 							HAL_TIM_Base_Stop_IT(&htim12);
-							HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, 0); // WRIST PWM output force to 0
-							WRIST=0;
 							EN=1;
 							break;
 						}
@@ -354,23 +370,6 @@ int main(void)
   #if (DEBUG_EN == 0)
 	  HAL_UART_Receive_DMA(&huart1, &chimp.UART_Buffer, 1);
   #endif
-
-  HAL_TIM_Base_Start_IT(&htim1);
-  HAL_TIM_Base_Start_IT(&htim2);
-
-  HAL_TIM_OC_Start_IT(&htim1,TIM_CHANNEL_1);
-  HAL_TIM_OC_Start_IT(&htim1,TIM_CHANNEL_2);
-  HAL_TIM_OC_Start_IT(&htim1,TIM_CHANNEL_3);
-  HAL_TIM_OC_Start_IT(&htim1,TIM_CHANNEL_4);
-
-  HAL_TIM_OC_Start_IT(&htim2,TIM_CHANNEL_1);
-  HAL_TIM_OC_Start_IT(&htim2,TIM_CHANNEL_2);
-  HAL_TIM_OC_Start_IT(&htim2,TIM_CHANNEL_3);
-  HAL_TIM_OC_Start_IT(&htim2,TIM_CHANNEL_4);
-
-  HAL_TIM_OC_Start_IT(&htim12,TIM_CHANNEL_1);
-
-  HAL_TIM_OC_Start_IT(&htim13,TIM_CHANNEL_1);
 
   // Wrist disable for safe initial state
   HAL_GPIO_WritePin(GPIOB, PIN_EN_WRIST, 1);
