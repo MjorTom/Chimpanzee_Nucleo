@@ -35,7 +35,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define MODE 0 // 0 IT, 1 DMA, 2 BUSY
+#define MODE 2 // 0 IT, 1 DMA, 2 BUSY
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/

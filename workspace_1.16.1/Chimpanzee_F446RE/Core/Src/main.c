@@ -113,7 +113,6 @@ typedef struct {
 	uint8_t             				      FillIndex;
 	uint8_t                                       Esc_f;
 	uint8_t 			                    UART_Buffer;
-	uint8_t                                  Arm_Torque;
 	uint8_t                                CHIMP_Init_f;
 	uint8_t                TxPacket[CHIMP_TX_PCKT_SIZE];
 	uint8_t                RxPacket[CHIMP_RX_PCKT_SIZE];
