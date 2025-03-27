@@ -240,15 +240,15 @@ void CHIMP_UART_RXHandler () {
 					memcpy(chimp.Motor_Arg, (chimp.RxPacket + 3), (chimp.FillIndex - 4));
 
 					if (!chimp.RxPacket[2]) {
-						htim1.Instance->CCR1 = chimp.Motor_Arg[0];
-						htim1.Instance->CCR2 = chimp.Motor_Arg[1];
-						htim1.Instance->CCR3 = chimp.Motor_Arg[2];
-						htim1.Instance->CCR4 = chimp.Motor_Arg[3];
+						htim1.Instance->CCR1 = chimp.Motor_Arg[0] + 40;
+						htim1.Instance->CCR2 = chimp.Motor_Arg[1] + 40;
+						htim1.Instance->CCR3 = chimp.Motor_Arg[2] + 40;
+						htim1.Instance->CCR4 = chimp.Motor_Arg[3] + 40;
 
-						htim2.Instance->CCR1 = chimp.Motor_Arg[4];
-						htim2.Instance->CCR2 = chimp.Motor_Arg[5];
-						htim2.Instance->CCR3 = chimp.Motor_Arg[6];
-						htim2.Instance->CCR4 = chimp.Motor_Arg[7];
+						htim2.Instance->CCR1 = chimp.Motor_Arg[4] + 40;
+						htim2.Instance->CCR2 = chimp.Motor_Arg[5] + 40;
+						htim2.Instance->CCR3 = chimp.Motor_Arg[6] + 40;
+						htim2.Instance->CCR4 = chimp.Motor_Arg[7] + 40;
 					} else {
 						switch((uint16_t) chimp.RxPacket[3]) {
 						case 0:
@@ -497,30 +497,30 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef* htim){
 	if(htim->Instance == TIM1 ) {
 		if(htim->Channel == HAL_TIM_ACTIVE_CHANNEL_1) {
-			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, 0);  // FDX: PB1  | D6
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, 0); // FDX: PB10 | D6
 		}
 		if(htim->Channel == HAL_TIM_ACTIVE_CHANNEL_2) {
-			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, 0);  // FSX: PA8  | D9
+			HAL_GPIO_WritePin(GPIOC,  GPIO_PIN_7, 0); // FSX:   C7 | D9
 		}
 		if(htim->Channel == HAL_TIM_ACTIVE_CHANNEL_3) {
-			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, 0);  // RDX: PA12  | A2
+			HAL_GPIO_WritePin(GPIOA,  GPIO_PIN_4, 0); // RDX:  PA4 | A2
 		}
 		if(htim->Channel == HAL_TIM_ACTIVE_CHANNEL_4) {
-			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, 0); // RSX: PA11 | D10
+			HAL_GPIO_WritePin(GPIOB,  GPIO_PIN_6, 0); // RSX:  PB6 | D10
 		}
 	}
 	else if(htim->Instance == TIM2) {
 		if(htim->Channel == HAL_TIM_ACTIVE_CHANNEL_1) {
-			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, 0); // UPFDX: PA4 | A3
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, 0); // UPFDX: PB0 | A3
 		}
 		if(htim->Channel == HAL_TIM_ACTIVE_CHANNEL_2) {
-			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, 0); // UPFSX: PA6 | A5
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_0, 0); // UPFSX: PC0 | A5
 		}
 		if(htim->Channel == HAL_TIM_ACTIVE_CHANNEL_3) {
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, 0); // UPRDX: PA0 | A0
 		}
 		if(htim->Channel == HAL_TIM_ACTIVE_CHANNEL_4) {
-			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, 0); // UPRSX: PB0 | D3
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, 0); // UPRSX: PB3 | D3
 		}
 	}
 	else if(htim->Instance == TIM12) {
@@ -566,15 +566,15 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim){
 		}
 	}
 	else if (htim->Instance == TIM1) {            // Communication Packet Args order
-		HAL_GPIO_WritePin(GPIOA,  GPIO_PIN_8, 1); // 1
-		HAL_GPIO_WritePin(GPIOB,  GPIO_PIN_1, 1); // 2
-		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, 1); // 3
-		HAL_GPIO_WritePin(GPIOA,  GPIO_PIN_12, 1); // 4
+		HAL_GPIO_WritePin(GPIOC,   GPIO_PIN_7, 1); // 1
+		HAL_GPIO_WritePin(GPIOB,  GPIO_PIN_10, 1); // 2
+		HAL_GPIO_WritePin(GPIOB,   GPIO_PIN_6, 1); // 3
+		HAL_GPIO_WritePin(GPIOA,   GPIO_PIN_4, 1); // 4
     }
 	else if (htim->Instance == TIM2) {
-		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6, 1); // 5
-		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, 1); // 6
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, 1); // 7
+		HAL_GPIO_WritePin(GPIOC, GPIO_PIN_0, 1); // 5
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, 1); // 6
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, 1); // 7
 		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, 1); // 8
 	}
 	else if (htim->Instance == TIM12) {
