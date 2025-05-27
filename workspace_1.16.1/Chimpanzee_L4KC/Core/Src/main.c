@@ -40,7 +40,7 @@
 #define DEBUG_EN 1
 
 #define PIN_DIR_WRIST GPIO_PIN_4 // GPIOB | D12
-#define  PIN_EN_WRIST GPIO_PIN_5 // GPIOB | D11
+#define    PIN_EN_ARM GPIO_PIN_5 // GPIOB | D11
 #define  PIN_DIR_HAND GPIO_PIN_7 // GPIOB | D4
 
 // Packets' Codes
@@ -90,6 +90,9 @@
 // HB Packet - Status field codes
 #define CHIMP_HB_READY  0b00000000
 #define CHIMP_HB_NREADY 0b00000001
+
+// Slope of the hand PWM, expressed in ms between each halving of the TIM15 prescaler
+#define HAND_PWM_SLOPE 300
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -109,6 +112,7 @@ typedef struct {
 	CHIMP_StatusTypeDef  				         Status;
 	uint16_t                              Motor_Arg[11];
 	uint8_t									       Tick;
+	uint8_t                                    HandTick;
 	uint8_t         		   				  HB_Period;
 	uint8_t           		   			   	    Version;
 	uint8_t         						 SubVersion;
@@ -116,6 +120,7 @@ typedef struct {
 	uint8_t                                       Esc_f;
 	uint8_t 			                    UART_Buffer;
 	uint8_t                                CHIMP_Init_f;
+	uint8_t                               PWM_divisions;
 	uint8_t                TxPacket[CHIMP_TX_PCKT_SIZE];
 	uint8_t                RxPacket[CHIMP_RX_PCKT_SIZE];
 	uint8_t             Resp_Pckt[CHIMP_RESP_PCKT_SIZE];
@@ -123,6 +128,8 @@ typedef struct {
 } CHIMP_TypeDef;
 
 static CHIMP_TypeDef chimp;
+
+uint8_t wrist_en_f, claw_en_f;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -226,7 +233,7 @@ void CHIMP_UART_RXHandler() {
 
 					HAL_TIM_OC_Start_IT(&htim15,TIM_CHANNEL_1);
 
-					HAL_TIM_OC_Start_IT(&htim16,TIM_CHANNEL_1);
+					//HAL_TIM_OC_Start_IT(&htim16,TIM_CHANNEL_1);
 				}
 			}
 			else {
@@ -248,41 +255,59 @@ void CHIMP_UART_RXHandler() {
 					} else {
 						switch((uint16_t) chimp.RxPacket[3]) {
 							case 0:
+								chimp.HandTick = 0;
+								chimp.PWM_divisions = 2;
+								htim15.Instance->PSC = 500;
 								HAL_GPIO_WritePin(GPIOB, PIN_DIR_WRIST, 1);
-								HAL_GPIO_WritePin(GPIOB,  PIN_EN_WRIST, 0);
+								wrist_en_f = 1;
 								HAL_TIM_Base_Start_IT(&htim15);
 								break;
 							case 1:
+								chimp.HandTick = 0;
+								chimp.PWM_divisions = 2;
+								htim15.Instance->PSC = 500;
 								HAL_GPIO_WritePin(GPIOB, PIN_DIR_WRIST, 0);
-								HAL_GPIO_WritePin(GPIOB,  PIN_EN_WRIST, 0);
+								wrist_en_f = 1;
 								HAL_TIM_Base_Start_IT(&htim15);
 								break;
 							case 2:
 								HAL_TIM_Base_Stop_IT(&htim15);
-								HAL_GPIO_WritePin(GPIOB, PIN_EN_WRIST, 1);
+								wrist_en_f = 0;
 								break;
 							case 3: //open claw
 								HAL_GPIO_WritePin(GPIOB, PIN_DIR_HAND, 1);
-								HAL_TIM_Base_Start_IT(&htim16);
+								//HAL_TIM_Base_Start_IT(&htim16);
+								HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, 1);
+								claw_en_f = 1;
 								break;
 							case 4: //close claw
 								HAL_GPIO_WritePin(GPIOB, PIN_DIR_HAND, 0);
-								HAL_TIM_Base_Start_IT(&htim16);
+								//HAL_TIM_Base_Start_IT(&htim16);
+								HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, 1);
+								claw_en_f = 1;
 								break;
 							case 5: //stop claw
-								HAL_TIM_Base_Stop_IT(&htim16);
+								//HAL_TIM_Base_Stop_IT(&htim16);
+								claw_en_f = 0;
+								HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, 0);
 								break;
 							case 6:
-								HAL_GPIO_WritePin(GPIOB, PIN_EN_WRIST, 0);
+								wrist_en_f = 1;
 								HAL_TIM_Base_Stop_IT(&htim15);
+								//HAL_TIM_Base_Stop_IT(&htim16);
+								HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, 0);
 								break;
 							case 7:
-								HAL_GPIO_WritePin(GPIOB, PIN_EN_WRIST, 1);
+								claw_en_f = 0; wrist_en_f = 0;
 								HAL_TIM_Base_Stop_IT(&htim15);
+								//HAL_TIM_Base_Stop_IT(&htim16);
+								HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7, 0);
 								break;
 							default:
 								break;
 						}
+						if (claw_en_f || wrist_en_f) HAL_GPIO_WritePin(GPIOB, PIN_EN_ARM, 0);
+						else HAL_GPIO_WritePin(GPIOB, PIN_EN_ARM, 1);
 					}
 				}
 			}
@@ -365,7 +390,7 @@ int main(void)
   #endif
 
   // Wrist disable for safe initial state
-  HAL_GPIO_WritePin(GPIOB, PIN_EN_WRIST, 1);
+  HAL_GPIO_WritePin(GPIOB, PIN_EN_ARM, 1);
 
   // Low Power Mode, not possible with BUSY WAIT
   //HAL_SuspendTick();
@@ -534,6 +559,7 @@ void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef* htim){
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim){
 	if (htim->Instance == TIM6) {
 		chimp.Tick++;
+		chimp.HandTick++;
 
 		if (chimp.Tick == chimp.HB_Period) {
 			chimp.HB_Pckt[CHIMP_HB_PAYLOAD_IDX] = 0x00;
@@ -557,6 +583,14 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim){
 			#endif
 
 			chimp.Tick = 0;
+		}
+
+		if (chimp.HandTick == (HAND_PWM_SLOPE/10)) {  // Check if the tick is equal to the desired slope divided for the TIM6 period in ms
+			if (chimp.PWM_divisions != 0) {
+				chimp.PWM_divisions--;
+				htim15.Instance->PSC /= 2;
+			}
+			chimp.HandTick = 0;
 		}
 	}
 	else if (htim->Instance == TIM1) {            // Communication Packet Args order
